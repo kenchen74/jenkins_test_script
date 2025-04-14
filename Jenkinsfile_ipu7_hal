@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     parameters {
-        choice(name:'HAL_Tags', choices:['20240926_1446','20241122','20250108_1730_388'], description:'HAL Tag')
-        choice(name:'BIN_Tags', choices:['20240926_1446','20241122','20250108_1730_388'], description:'BIN Tag')
+        choice(name:'HAL_Tags', choices:['20250108_1730_388','20240926_1446','20241122'], description:'HAL Tag')
+        choice(name:'BIN_Tags', choices:['20250108_1730_388','20240926_1446','20241122'], description:'BIN Tag')
     }
     
     environment {
