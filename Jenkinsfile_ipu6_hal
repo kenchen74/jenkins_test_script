@@ -1,0 +1,140 @@
+pipeline {
+    agent any
+
+    environment {
+        HTTP_PROXY = 'http://proxy-png.intel.com:911'
+        HTTPS_PROXY = 'http://proxy-png.intel.com:912'
+        My_User_Credentials = credentials("Ken_Chen")
+    }
+    parameters {
+        choice(name:'HAL_Tags', choices:['20240926_1446','20241122','20250108_1730_388'], description:'HAL Tag')
+        choice(name:'BIN_Tags', choices:['20240926_1446','20241122','20250108_1730_388'], description:'BIN Tag')
+    }
+
+    stages {
+        stage('Download HAL code') {
+            steps {
+                sh 'git config --global http.proxy "http://proxy-png.intel.com:911"'
+                sh "git config --global user.email 'jason.z.chen@intel.com'"
+                sh "git config --global user.name 'jason chen'"                
+                script {
+                    //def vars = load "/var/lib/jenkins/workspace/vars/camera_vars.groovy"
+                    def kernelTag = "Ubuntu-6.8.0-32.32"
+
+                    def dockerImage = 'ubuntu:latest'
+                    def containerName = 'my-ubuntu-container'
+                    
+                    def sharedScriptsFolder = "/var/jenkins_shared_scripts"
+                    def halFolder = "${env.WORKSPACE}"
+                    def halSourceFolder = "${env.WORKSPACE}/halSource"
+                    def binsFolder = "${env.WORKSPACE}/bins"
+                    def containerFolder ="/usr/src/halSource/"
+                    //def containerFolder = vars.containerFolder
+                    def containerScriptsFolder="/usr/src/scripts"
+                    
+                    dir("${binsFolder}") {
+                        if (fileExists("ipu6-camera-bins")) {
+                            echo "binarys/includes exists"
+                        }
+                        else {
+                            echo "Download binary/include files"
+                            sh 'git clone https://github.com/intel/ipu6-camera-bins.git'
+                        }
+                    }
+                    
+                    dir("${halSourceFolder}") {
+                        if (fileExists("ipu6-camera-hal")) {
+                            echo "HAL source exists"
+                        }
+                        else {
+                            echo "Download HAL source"
+                            sh 'git clone https://github.com/intel/ipu6-camera-hal.git'
+                        }
+                        if (fileExists("icamerasrc")) {
+                            echo "Camera API exists"
+                        }
+                        else {
+                            echo "Download Camera API"
+                            sh 'git clone https://github.com/intel/icamerasrc.git'
+                        }
+                    }
+                    dir ("${halSourceFolder}/ipu6-camera-hal") {
+                        sh 'git checkout remotes/origin/main'
+                        //sh 'git pull origin dfsg'
+                        //sh "git checkout tags/\"${params.HAL_Tags}\""                        
+                    }
+                    dir ("${halSourceFolder}/icamerasrc") {
+                        sh 'git checkout remotes/origin/icamerasrc_slim_api'
+                        //sh 'git pull origin dfsg'
+                        //sh 'git checkout tags/20240926_1446'
+                    }
+                    dir("${binsFolder}/ipu6-camera-bins") {
+                        sh 'git checkout remotes/origin/main'
+                        //sh 'git pull origin dfsg'
+                        sh "git checkout tags/\"${params.BIN_Tags}\""
+                    }
+
+                    // Start to build
+                    dir("${halFolder}") {
+                        withDockerContainer(args: "-d --name my-userspace-ipu6 --user root -v ${halFolder}:${containerFolder} -v ${sharedScriptsFolder}:${containerScriptsFolder}", image: 'ubuntu:latest') {
+                            sh """
+                            apt update
+                            apt install -y libexpat-dev automake libtool libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libdrm-dev
+                            apt install -y autoconf rpm
+                            echo "Shell is $SHELL"
+                            pwd
+                            ls
+                            mkdir -p /lib/firmware/intel/ipu
+                            cp -r ${containerFolder}/bins/ipu6-camera-bins/lib/*/lib* /usr/lib
+                            cp -r ${containerFolder}/bins/ipu6-camera-bins/lib/firmware/intel/ipu/*.bin /lib/firmware/intel/ipu
+                            cp -P ${containerFolder}/bins/ipu6-camera-bins/lib/lib* /usr/lib/
+
+                            mkdir -p /usr/include/ipu6 /usr/lib/pkgconfig
+                            cp -r ${containerFolder}/bins/ipu6-camera-bins/include/* /usr/include/
+                            cp -fr --no-preserve=mode ${containerFolder}/bins/ipu6-camera-bins/lib/pkgconfig/* /usr/lib/pkgconfig/
+                            
+                            ls /usr/lib/pkgconfig
+
+                            cd ${containerFolder}/halSource
+                            #cp ipu6-camera-hal/build.sh ./
+                            #./copy_libs-ipu6.sh
+                            #./build.sh
+                            cd ipu6-camera-hal
+                            mkdir -p build && cd build
+                            cmake -DCMAKE_BUILD_TYPE=Release \
+                            -DCMAKE_INSTALL_PREFIX=/usr \
+                            -DCMAKE_INSTALL_LIBDIR=lib \
+                            -DBUILD_CAMHAL_TESTS=OFF \
+                            -DBUILD_CAMHAL_ADAPTOR=ON \
+                            -DBUILD_CAMHAL_PLUGIN=ON \
+                            -DIPU_VERSIONS="ipu6;ipu6ep;ipu6epmtl" \
+                            -DIPU_VER="ipu6;ipu6ep;ipu6epmtl" \
+                            -DUSE_PG_LITE_PIPE=ON \
+                            ..
+                            make && make install
+                            cd ../..
+                            
+                            ${containerScriptsFolder}/file_existence.sh ${containerFolder}/halSource/icamerasrc/rpm/*.rpm
+                            cd ${containerFolder}/halSource/icamerasrc
+                            export CHROME_SLIM_CAMHAL=ON
+                            ./autogen.sh
+                            ./configure --prefix=/usr
+                            make
+                            git config --global --add safe.directory /usr/src/halSource/halSource/icamerasrc
+                            make rpm
+                            cd ..
+                            
+                            cd /usr/src/halSource/halSource
+                            ${containerScriptsFolder}/ipuHAL_files_copy.sh
+                            ${containerScriptsFolder}/debian_control_file.sh "camera-hal-lib" "kenx.chen@intel.com" "ipu6 library files"
+                            echo "Starting to pack files"
+                            dpkg-deb --build camera-hal-lib
+                            echo "End packing files"
+                            """
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
