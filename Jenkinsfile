@@ -3,7 +3,7 @@ pipeline {
 
     parameters {
         string(name: 'GREETING', defaultValue: 'Hello', description: 'What to say?')
-        string(name: 'USERNAME', defaultValue: 'Ken Chen", description: 'Who\'s talking?')
+        string(name: 'USERNAME', defaultValue: 'Ken Chen', description: 'Who is talking')
     }
 
     stages {
