@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'Action', defaultValue: 'Build', description: 'Action to take')
-        string(name: 'Category', defaultValue: 'Kernel', description: 'Target to be done')
+        string(name: 'ACTION', defaultValue: 'Build', description: 'Action to take')
+        string(name: 'CATEGORY', defaultValue: 'Kernel', description: 'Target to be done')
     }
 
     stages {
