@@ -9,7 +9,7 @@ pipeline {
     stages {
         stage('Do Something') {
             steps {
-                echo "$Jenkins, {params.ACTION} the ${params.CATEGORY}!"
+                echo "$Jenkins, ${params.ACTION} the ${params.CATEGORY}!"
             }
         }
     }
