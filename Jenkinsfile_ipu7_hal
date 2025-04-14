@@ -1,0 +1,230 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(name:'HAL_Tags', choices:['20240926_1446','20241122','20250108_1730_388'], description:'HAL Tag')
+        choice(name:'BIN_Tags', choices:['20240926_1446','20241122','20250108_1730_388'], description:'BIN Tag')
+    }
+    
+    environment {
+        HTTP_PROXY = 'http://proxy-png.intel.com:911'
+        HTTPS_PROXY = 'http://proxy-png.intel.com:912'
+        My_User_Credentials = credentials("Ken_Chen")
+    }
+
+    stages {
+        stage('Download HAL code') {
+            steps {
+                sh 'git config --global http.proxy "http://proxy-png.intel.com:911"'
+                sh "git config --global user.email 'jason.z.chen@intel.com'"
+                sh "git config --global user.name 'jason chen'"
+                sh "git config --global --add safe.directory /var/lib/jenkins/workspace/docker_v6.8_ipu6/ipu7_camera_hal/halSource/icamerasrc"
+                script {
+                    def kernelTag = "Ubuntu-6.8.0-32.32"
+
+                    def dockerImage = 'ubuntu:latest'
+                    def containerName = 'my-ubuntu-container'
+                    
+                    def sharedScriptsFolder = "/var/jenkins_shared_scripts"
+                    def halFolder = "${env.WORKSPACE}"
+                    def halSourceFolder = "${env.WORKSPACE}/halSource"
+                    def binsFolder = "${env.WORKSPACE}/bins"
+                    def containerFolder ="/usr/src/halSource/"
+                    def containerScriptsFolder="/usr/src/scripts"
+                    
+                    //def config = readJSON file:'config.json'
+                    
+                    //echo "${config}"
+                    
+                    dir("${binsFolder}") {
+                        if (fileExists("ipu6-camera-bins")) {
+                            echo "binarys/includes exists"
+                        }
+                        else {
+                            echo "Download binary/include files"
+                            sh 'git clone https://github.com/intel/ipu6-camera-bins.git'
+                        }                        
+                        if (fileExists("ipu7-camera-bins")) {
+                            echo "binarys/includes exists"
+                        }
+                        else {
+                            echo "Download binary/include files"
+                            sh 'git clone https://github.com/intel/ipu7-camera-bins.git'
+                        }
+                    }
+                    
+                    dir("${halSourceFolder}") {
+                        if (fileExists("ipu6-camera-hal")) {
+                            echo "HAL source exists"
+                        }
+                        else {
+                            echo "Download HAL source"
+                            sh 'git clone https://github.com/intel/ipu6-camera-hal.git'
+                        }                        
+                        if (fileExists("ipu7-camera-hal")) {
+                            echo "HAL source exists"
+                        }
+                        else {
+                            echo "Download HAL source"
+                            sh 'git clone https://github.com/intel/ipu7-camera-hal.git'
+                        }
+                        if (fileExists("icamerasrc")) {
+                            echo "Camera API exists"
+                        }
+                        else {
+                            echo "Download Camera API"
+                            sh 'git clone https://github.com/intel/icamerasrc.git'
+                        }
+                    }
+                    dir ("${halSourceFolder}/ipu6-camera-hal") {
+                        sh "git checkout remotes/origin/main"
+                        //git pull origin dfsg
+                        //git checkout tags/"${config.ipu6halTags}"
+                    }
+                    dir ("${halSourceFolder}/icamerasrc") {
+                        //sh """
+                        //git checkout remotes/origin/dfsg
+                        //git pull origin dfsg
+                        //git checkout tags/"${config.icamerasrcTags}"
+                        //git checkout remotes/origin/icamerasrc_slim_api
+                        //"""
+                        sh 'git checkout remotes/origin/icamerasrc_slim_api'
+                    }
+                    dir("${binsFolder}/ipu6-camera-bins") {
+                        //sh """
+                        //git checkout remotes/origin/dfsg
+                        //git pull origin dfsg
+                        //git checkout tags/"${config.ipu6binTags}"
+                        //"""
+                        sh 'git checkout remotes/origin/main'
+                        sh 'git checkout tags/20241122'
+                    }
+                    dir("${binsFolder}/ipu7-camera-bins") {
+                        sh """
+                        git checkout 'remotes/origin/main'
+                        git checkout tags/\"${params.BIN_Tags}\"
+                        """
+                    }
+                    dir ("${halSourceFolder}/ipu7-camera-hal") {
+                    //    sh """
+                    //    git checkout tags/"${config.ipu7halTags}"
+                    //    """
+                        sh """
+                        git checkout 'remotes/origin/main'
+                        git checkout tags/\"${params.HAL_Tags}\"
+                        """                    
+                    }                    
+
+                    // Start to build
+                    dir("${halFolder}") {
+                        withDockerContainer(args: "-d --name my-userspace-ipu7 --user root -v ${halFolder}:${containerFolder} -v ${sharedScriptsFolder}:${containerScriptsFolder}", image: 'ubuntu:latest') {
+                            sh """
+                            uname -r
+                            
+                            export http_proxy="http://proxy-png.intel.com:911"
+                            export https_proxy="http://proxy-png.intel.com:912"
+                            export HTTP_PROXY=$http_proxy
+                            export HTTPS_PROXY=$https_proxy
+                            
+                            echo "Shell is $SHELL"
+                            pwd
+                            ls
+                            
+                            apt update
+                            apt install -y libexpat-dev libjsoncpp-dev automake libtool libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+                            apt install -y pkg-config rpm ca-certificates
+                            
+                            mkdir -p /lib/firmware/intel/ipu
+                            cp -r ${containerFolder}/bins/ipu6-camera-bins/lib/*/lib* /usr/lib
+                            cp -r ${containerFolder}/bins/ipu6-camera-bins/lib/firmware/intel/ipu/*.bin /lib/firmware/intel/ipu
+                            cp -P ${containerFolder}/bins/ipu6-camera-bins/lib/lib* /usr/lib/
+                            cp -r ${containerFolder}/bins/ipu7-camera-bins/lib/firmware/intel/ipu/*.bin /lib/firmware/intel/ipu
+                            cp ${containerFolder}/bins/ipu7-camera-bins/lib/lib* /usr/lib/
+
+                            mkdir -p /usr/include/ipu6 /usr/include/ipu7 /usr/lib/pkgconfig
+                            cp -r ${containerFolder}/bins/ipu6-camera-bins/include/* /usr/include/
+                            cp -fr --no-preserve=mode ${containerFolder}/bins/ipu6-camera-bins/lib/pkgconfig/* /usr/lib/pkgconfig/
+                            cp -r ${containerFolder}/bins/ipu7-camera-bins/include/* /usr/include/
+                            cp -r ${containerFolder}/bins/ipu7-camera-bins/lib/pkgconfig/* /usr/lib/pkgconfig/
+                            
+                            ls /usr/lib/pkgconfig
+
+                            cd ${containerFolder}/halSource
+
+                            ${containerScriptsFolder}/file_existence.sh ${containerFolder}/halSource/icamerasrc/rpm/*.rpm
+                            ${containerScriptsFolder}/file_existence.sh ${containerFolder}/halSource/*.deb
+                            ${containerScriptsFolder}/file_existence.sh ${containerFolder}/bins/*.deb
+                            ${containerScriptsFolder}/file_existence.sh ${containerFolder}/halSource/deb_files/*.rpm
+                            ${containerScriptsFolder}/file_existence.sh ${containerFolder}/halSource/deb_files/*.deb
+                            
+
+                            cd ipu6-camera-hal && mkdir -p build && cd build
+                            cmake -DCMAKE_BUILD_TYPE=Release \
+                            -DCMAKE_INSTALL_PREFIX=/usr \
+                            -DCMAKE_INSTALL_LIBDIR=lib \
+                            -DBUILD_CAMHAL_TESTS=OFF \
+                            -DBUILD_CAMHAL_ADAPTOR=ON \
+                            -DBUILD_CAMHAL_PLUGIN=ON \
+                            -DIPU_VERSIONS="ipu6;ipu6ep;ipu6epmtl" \
+                            -DIPU_VER="ipu6;ipu6ep;ipu6epmtl" \
+                            -DUSE_PG_LITE_PIPE=ON \
+                            ..
+                            make && make install
+                            cd ../..
+                            
+                            cd ipu7-camera-hal && mkdir -p build && cd build
+                            cmake -DCMAKE_BUILD_TYPE=Release \
+                            -DCMAKE_INSTALL_PREFIX=/usr \
+                            -DCMAKE_INSTALL_LIBDIR=lib \
+                            -DBUILD_CAMHAL_ADAPTOR=ON \
+                            -DBUILD_CAMHAL_PLUGIN=ON \
+                            -DIPU_VERSIONS="ipu7x;ipu75xa" \
+                            -DUSE_STATIC_GRAPH=ON \
+                            -DUSE_STATIC_GRAPH_AUTOGEN=ON \
+                            ..
+                            make && make install
+                            cd ../..
+                            
+                            git config --global --add safe.directory /usr/src/halSource/halSource/icamerasrc
+                            # build icamerasrc
+                            cd /usr/src/halSource/halSource/icamerasrc
+                            git tag
+                            git checkout tags/20240924_1600_1
+                            export CHROME_SLIM_CAMHAL=ON
+                            ./autogen.sh
+                            ./configure --prefix=/usr
+                            make
+                            make install
+                            make rpm
+                            #rpm -ivh --force --nodeps icamerasrc-*.rpm
+                            
+                            #cd /usr/src/halSource/bins
+                            #${containerScriptsFolder}/pack_bin_files.sh
+                            
+                            cd /usr/src/halSource/halSource
+                            #cp -r out/install/etc/* camera-hal-lib/etc/
+                            #cp -r out/install/usr/* camera-hal-lib/usr/
+                            #cp -r out/install/include/* camera-hal-lib/usr/include
+                            #cp -r out/install/lib/* camera-hal-lib/usr/lib/
+                            #dpkg-deb --build camera-hal-lib
+                            ${containerScriptsFolder}/ipuHAL_files_copy.sh
+                            dpkg-deb --build camera-hal-lib
+                            
+                            #mkdir -p ${containerFolder}/deb_files
+                            #cp ${containerFolder}/halSource/icamerasrc/rpm/*.rpm ${containerFolder}/halSource/deb_files
+                            #cp ${containerFolder}/halSource/*.deb ${containerFolder}/halSource/deb_files
+                            #cp ${containerFolder}/halSource/bins/*.deb ${containerFolder}halSource/deb_files
+                            """
+                        }
+                    }
+                    //dir ("${halFolder}/deb_files") {
+                    //    sh """
+                    //    echo '${My_User_Credentials_PSW}'
+                    //    ${halSourceFolder}/rt_upload.sh '${My_User_Credentials_PSW}' "userspace"
+                    //    """
+                    //}                                        
+                }
+            }
+        }
+    }
+}
